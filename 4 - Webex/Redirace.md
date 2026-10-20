@@ -4,8 +4,6 @@
 
 - **Titre :** Redirace
 - **Catégorie :** webex
-- **Points :** 643
-- **Solves :** 64
 - **Connexion :** `http://web.ctf.yogosha.com:8004`
 
 > PassGate is an in-house OAuth2 authorization server and resource API for an admin
