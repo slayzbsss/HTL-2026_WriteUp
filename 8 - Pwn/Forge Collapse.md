@@ -1,7 +1,7 @@
 # Forge Collapse — writeup
 
 - **CTF** : Hack Ton Lycée (HTL) 2026
-- **Catégorie** : pwn — **834 pts** (44 solves)
+- **Catégorie** : pwn
 - **Remote** : `nc pwn.ctf.yogosha.com 30001`
 - **Binaire** : moteur JavaScript-subset avec JIT optimisant (`engine.c`).
 
