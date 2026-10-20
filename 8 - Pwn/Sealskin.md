@@ -1,7 +1,7 @@
 # Sealskin — writeup
 
 - **CTF** : Hack Ton Lycée (HTL) 2026
-- **Catégorie** : pwn — **643 pts** (64 solves)
+- **Catégorie** : pwn
 - **Remote** : `nc pwn.ctf.yogosha.com 30002`
 - **Binaire** : VM à registres + vérifieur statique (`vm.c`).
 
