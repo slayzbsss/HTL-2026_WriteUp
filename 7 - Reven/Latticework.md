@@ -4,8 +4,6 @@
 
 - **Titre :** Latticework
 - **Catégorie :** reven
-- **Points :** 481
-- **Solves :** 77
 - **Connexion :** `nc reven.ctf.yogosha.com 31001`
 
 > *No CPU, no `.text`, just fabric.* `latticework.bin` est un bitstream Lattice
