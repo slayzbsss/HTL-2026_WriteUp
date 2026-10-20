@@ -4,8 +4,6 @@
 
 - **Titre :** Palimpsest
 - **Catégorie :** reven
-- **Points :** 365
-- **Solves :** 85
 - **Connexion :** *aucune* (crackme local, pas de service réseau)
 
 > *Someone scraped the parchment and wrote over it. Scrape again.*
