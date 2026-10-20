@@ -2,7 +2,6 @@
 
 - **CTF :** Hack Ton Lycée (HTL) 2026
 - **Catégorie :** infra
-- **Points :** 584 — **Solves :** 69
 - **Grader :** `http://infra.ctf.yogosha.com:7002`
 - **Flag :** `HTL{pin_the_subject_not_just_the_audience}`
 
