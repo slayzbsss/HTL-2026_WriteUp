@@ -4,8 +4,6 @@
 
 - **Titre :** Wavefront
 - **Catégorie :** reven
-- **Points :** 271
-- **Solves :** 91
 - **Connexion :** *aucune* (crackme local, pas de service réseau)
 
 > *A shader that only agrees with itself.*
