@@ -1,206 +1,189 @@
-# Sidewinder
+# Crosswire
 
 - **CTF :** Hack Ton Lycée (HTL) 2026
 - **Catégorie :** infra
-- **Points :** 467 — **Solves :** 78
-- **Grader :** `http://infra.ctf.yogosha.com:7001`
-- **Flag :** `HTL{a_dot_is_not_a_wildcard}`
+- **Points :** 584 — **Solves :** 69
+- **Grader :** `http://infra.ctf.yogosha.com:7002`
+- **Flag :** `HTL{pin_the_subject_not_just_the_audience}`
 
 ## Énoncé
 
-Une plateforme de paiement fait tourner son *ledger* derrière un service mesh.
-Les workloads s'authentifient en mTLS et le sidecar du ledger applique une
-`AuthorizationPolicy` censée n'admettre que **deux** appelants :
+La CI de `acme-corp/urlmin-deploy` déploie sur AWS sans aucune clé statique : le
+workflow `deploy` demande un jeton OIDC GitHub Actions et l'échange, via le
+fournisseur OIDC du compte, contre le rôle IAM `github-deploy-role`
+(`sts:AssumeRoleWithWebIdentity`). Ce rôle peut écrire dans le bucket
+d'artefacts de production.
 
-- le **checkout writer** — service account `checkout.v2` dans le namespace
-  `pay` — autorisé à `POST /ledger/append` ;
-- le **reconciler** — service account `reconciler` dans le namespace
-  `ledger-ops` — autorisé à `GET /ledger/reconcile`.
+Lors du dernier incident, un jeton OIDC capturé a montré qu'un run qui **n'était
+pas** le déploiement de production assumait quand même `github-deploy-role`.
+C'est la *trust policy* du rôle qui décide qui a le droit de faire cet échange,
+et elle est actuellement trop permissive.
 
-Tout le reste doit être rejeté par le sidecar. Or un rapport red-team montre
-qu'un **imposteur** atteint `POST /ledger/append` alors qu'il n'est pas
-`checkout.v2`.
+But : durcir la trust policy pour que le contexte capturé ne puisse plus assumer
+le rôle, **sans** casser le vrai déploiement. Le grader évalue la policy soumise
+en direct contre le vrai jeton de deploy ET le jeton d'incident ; il ne rend le
+flag que si la policy est à la fois **secure** (incident rejeté) et
+**functional** (le vrai deploy assume toujours le rôle et garde sa permission).
 
-But : re-scoper la policy pour que tous les imposteurs reçoivent `403`, tout en
-gardant `200` pour les **deux** appelants légitimes sur leur verbe/chemin
-autorisé. Verrouiller un appelant légitime ne compte pas.
+## Le modèle
 
-## Le modèle de matching
+- **Fichier à éditer :** `trust-policy.json` (le `AssumeRolePolicyDocument` du
+  rôle).
+- `deploy.yml` : le seul workflow censé atteindre le rôle (push sur `main`, lié
+  à l'environnement protégé `production`).
+- `captured-token.jwt` : le jeton OIDC observé pendant l'incident.
 
-Point clé donné par l'énoncé :
+La trust policy fournie au départ :
 
-> Ce build du mesh compile chaque entrée `principals`, `hosts`, `paths` et
-> valeur d'en-tête en un **matcher RE2** et exige un **match plein-chaîne**
-> (full-string). `*` devient `.*`. Les autres caractères sont utilisés
-> **verbatim**.
-
-L'identité est le SPIFFE URI SAN du certificat du workload, p. ex.
-`spiffe://cluster.local/ns/pay/sa/checkout.v2`. Le sidecar retire le schéma
-`spiffe://` et compare le reste à chaque entrée `principals`.
-
-La policy fournie (handout) :
-
-```yaml
-principals:
-  - "cluster.local/ns/pay/sa/checkout.v2"      # rule 1 (POST /ledger/append)
-...
-principals:
-  - "cluster.local/ns/ledger-ops/sa/reconciler"  # rule 2 (GET /ledger/reconcile)
+```json
+"Condition": {
+  "StringEquals": {
+    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+    "token.actions.githubusercontent.com:repository_owner": "acme-corp"
+  }
+}
 ```
+
+Elle ne vérifie que **l'audience** (`aud`) et **le propriétaire du dépôt**
+(`repository_owner`).
 
 ## La vulnérabilité
 
-Dans une regex RE2, le caractère `.` **n'est pas un point littéral** : c'est un
-métacaractère qui matche **n'importe quel caractère**. Comme l'entrée est
-utilisée « verbatim » puis compilée en RE2 full-string, l'entrée :
+On décode le payload du jeton d'incident (`captured-token.jwt`, 2e segment en
+base64url) :
 
-```
-cluster.local/ns/pay/sa/checkout.v2
-```
-
-se comporte comme la regex `cluster.local/ns/pay/sa/checkout.v2`, où chaque `.`
-accepte un caractère quelconque. Résultat, le `.` de `checkout.v2` capte aussi
-bien le vrai `checkout.v2` que tout imposteur de la forme `checkout?v2` :
-
-- `cluster.local/ns/pay/sa/checkout-v2` (le `-` est capté par le `.`),
-- `cluster.local/ns/pay/sa/checkoutXv2`, etc.
-
-Un service account nommé `checkout-v2` dans le namespace `pay` (nom DNS-1123
-tout à fait valide) présente donc une identité qui **matche** l'entrée
-`principals` et obtient `POST /ledger/append`. C'est l'imposteur du rapport.
-
-La correction : **échapper les points** pour qu'ils redeviennent littéraux
-(`\.`), de sorte que seule l'identité exacte matche.
-
-## Vérification locale du matcher
-
-On reproduit la logique du mesh en Python (`re.fullmatch`, `*` → `.*`) :
-
-```python
-import re
-def matches(pattern, identity):
-    return re.compile(pattern.replace('*', '.*') + r'\Z').fullmatch(identity) is not None
-
-legit = "cluster.local/ns/pay/sa/checkout.v2"
-imp   = "cluster.local/ns/pay/sa/checkout-v2"
-
-print(matches("cluster.local/ns/pay/sa/checkout.v2",   legit))  # True
-print(matches("cluster.local/ns/pay/sa/checkout.v2",   imp))    # True  <- FUITE
-print(matches(r"cluster\.local/ns/pay/sa/checkout\.v2", legit)) # True
-print(matches(r"cluster\.local/ns/pay/sa/checkout\.v2", imp))   # False <- corrige
+```json
+{
+  "aud": "sts.amazonaws.com",
+  "sub": "repo:acme-corp/urlmin-deploy:pull_request",
+  "repository_owner": "acme-corp",
+  "event_name": "pull_request",
+  "ref": "refs/pull/42/merge",
+  "job_workflow_ref": "acme-corp/urlmin-deploy/.github/workflows/ci.yml@refs/pull/42/merge"
+}
 ```
 
-Avec les points échappés, l'imposteur `checkout-v2` ne matche plus, mais le
-`checkout.v2` légitime matche toujours.
+Le jeton d'incident a `aud = sts.amazonaws.com` **et**
+`repository_owner = acme-corp` : il satisfait donc les **deux** seules
+conditions de la policy. N'importe quel workflow du moindre dépôt de
+l'organisation `acme-corp` (y compris un `pull_request` déclenché par une PR
+extérieure, workflow `ci.yml`, non lié à l'environnement `production`) peut
+assumer le rôle de déploiement. C'est beaucoup trop large.
+
+La granularité qui manque, c'est le claim **`sub`** (subject). Pour GitHub
+Actions, `sub` encode précisément le contexte d'exécution :
+
+- jeton d'incident : `sub = repo:acme-corp/urlmin-deploy:pull_request` ;
+- vrai deploy : il est lié à `environment: production` dans `deploy.yml`
+  (`environment: production`), donc GitHub émet
+  `sub = repo:acme-corp/urlmin-deploy:environment:production`.
+
+Il suffit donc d'**épingler le `sub`** sur le sujet exact du vrai déploiement.
 
 ## Résolution pas à pas
 
-**1. Récupérer la baseline** depuis le grader (modèle d'édition) :
+**1. Décoder le jeton capturé** pour lire son `sub` :
 
 ```python
-import urllib.request
-policy = urllib.request.urlopen(f"http://{host}:{port}/policy").read().decode()
+import base64, json
+jwt = open("extracted/captured-token.jwt").read().strip()
+payload = jwt.split(".")[1]
+payload += "=" * (-len(payload) % 4)                # padding base64url
+print(json.loads(base64.urlsafe_b64decode(payload))["sub"])
+# -> repo:acme-corp/urlmin-deploy:pull_request
 ```
 
-**2. Échapper tous les points** dans les deux entrées `principals` :
+**2. En déduire le `sub` du vrai deploy.** `deploy.yml` contient
+`environment: production`, donc le sujet du jeton réel est :
 
-```yaml
-# rule 1
-- 'cluster\.local/ns/pay/sa/checkout\.v2'
-# rule 2
-- 'cluster\.local/ns/ledger-ops/sa/reconciler'
+```
+repo:acme-corp/urlmin-deploy:environment:production
 ```
 
-(On met des quotes simples YAML pour que `\.` passe tel quel, sans
-interprétation d'échappement.)
+Les deux `sub` diffèrent : on peut discriminer dessus.
 
-**3. Ne rien casser d'autre** : on conserve à l'identique `hosts`, `methods`,
-`paths` et la condition `when` sur l'en-tête `x-ledger-tier` (c'est une
-contrainte légitime du checkout, pas le bug). On ne fait que resserrer les
-identités.
+**3. Ajouter une condition `StringEquals` sur le `sub`** (on garde `aud`) :
 
-**4. Soumettre** la policy au grader et lire le verdict :
+```json
+"Condition": {
+  "StringEquals": {
+    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+    "token.actions.githubusercontent.com:sub": "repo:acme-corp/urlmin-deploy:environment:production"
+  }
+}
+```
+
+Le jeton d'incident (`...:pull_request`) ne correspond plus → **rejeté**.
+Le vrai deploy (`...:environment:production`) correspond → **toujours OK**.
+
+**4. Soumettre la policy au grader** et lire le verdict :
 
 ```python
-req = urllib.request.Request(f"http://{host}:{port}/grade",
-                             data=policy.encode(),
-                             headers={"Content-Type": "application/x-yaml"})
-print(urllib.request.urlopen(req).read().decode())
-# {"checks":[{"check":"authorized-callers-served","passed":true},
-#            {"check":"impostor-identities-denied","passed":true}],
-#  "flag":"...","passed":true}
+import json, urllib.request
+body = json.dumps({"trust_policy": policy}).encode()
+req = urllib.request.Request(f"http://{host}:{port}/grade", data=body,
+                             headers={"Content-Type": "application/json"})
+print(json.loads(urllib.request.urlopen(req).read()))
+# {"flag": "...", "functional": true, "passed": true, "secure": true}
 ```
 
-> `/apply` et `/grade` acceptent tous deux la policy postée en brut. Un `GET
-> /grade` sans corps ne soumet rien et ne rend jamais le flag.
+> Remarque : on pinne le **sujet** (`sub`), pas seulement l'audience — d'où le
+> flag. On pourrait aussi ajouter `repository`/`repository_id`, mais épingler le
+> `sub` sur l'environnement `production` suffit et reste la pratique canonique.
 
 ## Script complet → Script intégral
 
-Script autonome (stdlib seule, pas de dépendance exotique). Il embarque la
-policy corrigée et la soumet au grader.
+Script autonome (stdlib seule, pas de dépendance exotique). Il construit la
+trust policy durcie et la soumet au grader.
 
 ```python
 #!/usr/bin/env python3
-# Sidewinder (HTL 2026 - infra) - solveur autonome.
+# Crosswire (HTL 2026 - infra) - solveur autonome.
 # Usage : python3 solve.py <host> <port>
-#   ex. : python3 solve.py infra.ctf.yogosha.com 7001
-import sys, urllib.request
+#   ex. : python3 solve.py infra.ctf.yogosha.com 7002
+import sys, json, urllib.request
 
-# --- AuthorizationPolicy corrigee (points echappes) ------------------------
-POLICY = r"""apiVersion: security.istio.io/v1
-kind: AuthorizationPolicy
-metadata:
-  name: ledger-allow
-  namespace: ledger
-spec:
-  selector:
-    matchLabels:
-      app: ledger
-  action: ALLOW
-  rules:
-    - from:
-        - source:
-            principals:
-              - 'cluster\.local/ns/pay/sa/checkout\.v2'
-      to:
-        - operation:
-            hosts:
-              - "Ledger.pay.svc.cluster.local"
-            methods:
-              - "POST"
-            paths:
-              - "/ledger/append"
-      when:
-        - key: request.headers[x-ledger-tier]
-          values:
-            - "internal"
-            - "gold"
-    - from:
-        - source:
-            principals:
-              - 'cluster\.local/ns/ledger-ops/sa/reconciler'
-      to:
-        - operation:
-            methods:
-              - "GET"
-            paths:
-              - "/ledger/reconcile"
-"""
+# --- Trust policy durcie ---------------------------------------------------
+TRUST_POLICY = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Federated": "arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+                "StringEquals": {
+                    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                    # LA correction : on fige le sujet exact du deploiement reel.
+                    # Jeton d'incident : sub=repo:acme-corp/urlmin-deploy:pull_request -> rejete.
+                    # Vrai deploy (lie a environment: production) :
+                    #   sub=repo:acme-corp/urlmin-deploy:environment:production -> accepte.
+                    "token.actions.githubusercontent.com:sub": "repo:acme-corp/urlmin-deploy:environment:production"
+                }
+            }
+        }
+    ]
+}
 
 
 def main():
     if len(sys.argv) != 3:
         sys.exit(f"usage: python3 {sys.argv[0]} <host> <port>")
     host, port = sys.argv[1], sys.argv[2]
-    # /grade et /apply acceptent tous deux la policy postee en brut.
     url = f"http://{host}:{port}/grade"
 
+    body = json.dumps({"trust_policy": TRUST_POLICY}).encode()
     req = urllib.request.Request(
-        url, data=POLICY.encode(),
-        headers={"Content-Type": "application/x-yaml"}, method="POST"
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )
     with urllib.request.urlopen(req, timeout=20) as r:
-        print(r.read().decode())
+        resp = json.loads(r.read())
+
+    print(json.dumps(resp, indent=2))
+    if resp.get("flag"):
+        print("\nFLAG:", resp["flag"])
 
 
 if __name__ == "__main__":
@@ -210,21 +193,22 @@ if __name__ == "__main__":
 Exécution :
 
 ```
-$ python3 solve.py infra.ctf.yogosha.com 7001
-{"checks":[{"check":"authorized-callers-served","passed":true},{"check":"impostor-identities-denied","passed":true}],"flag":"HTL{a_dot_is_not_a_wildcard}","passed":true}
+$ python3 solve.py infra.ctf.yogosha.com 7002
+{
+  "flag": "HTL{pin_the_subject_not_just_the_audience}",
+  "functional": true,
+  "passed": true,
+  "secure": true
+}
+
+FLAG: HTL{pin_the_subject_not_just_the_audience}
 ```
 
 ## Flag
 
 ```
-HTL{a_dot_is_not_a_wildcard}
+HTL{pin_the_subject_not_just_the_audience}
 ```
 
-> Testé : oui — logique du matcher reproduite en local (`re.fullmatch`) **et**
-> policy soumise au grader live `infra.ctf.yogosha.com:7001`
-> (`authorized-callers-served` + `impostor-identities-denied` tous deux `true`).
->
-> Note : la baseline servie par `GET /policy` du grader a parfois déjà les
-> points échappés ; c'est bien le handout d'origine (`manifests/authz.yaml`),
-> aux points **non** échappés, qui est vulnérable — on l'a vérifié, il échoue
-> sur `impostor-identities-denied`.
+> Testé : oui — soumis au grader live `infra.ctf.yogosha.com:7002`,
+> `secure: true` et `functional: true`.
