@@ -4,8 +4,6 @@
 
 - **Titre :** Régie
 - **Catégorie :** webex
-- **Points :** 547
-- **Solves :** 72
 - **Connexion :** `http://web.ctf.yogosha.com:8007`
 
 > Régie est la console d'importation du logiciel de gestion des notes. Les
