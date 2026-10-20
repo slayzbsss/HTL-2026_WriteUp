@@ -1,6 +1,6 @@
 # Byte Ladder
 
-- **Catégorie :** crypto — 584 points
+- **Catégorie :** crypto
 - **CTF :** Hack Ton Lycée (HTL 2026, plateforme Yogosha)
 - **Service :** `http://crypto.ctf.yogosha.com:9005`
 - **Flag :** `HTL{ecb_leaks_one_byte_at_a_time}`
