@@ -4,8 +4,6 @@
 
 - **Titre :** Archivist
 - **Catégorie :** webex
-- **Points :** 521
-- **Solves :** non récupéré (CTF terminé au moment d'écrire le writeup)
 - **Host:port :** `http://web.ctf.yogosha.com:8006`
 
 > L’archive documentaire du lycée expose une petite API : il est possible
