@@ -1,6 +1,6 @@
 # Orphic Seal
 
-- **Catégorie :** crypto — 255 points
+- **Catégorie :** crypto
 - **CTF :** Hack Ton Lycée (HTL 2026, plateforme Yogosha)
 - **Service :** `http://crypto.ctf.yogosha.com:9001`
 - **Flag :** `HTL{one_unhashed_commitment_breaks_the_proof}`
