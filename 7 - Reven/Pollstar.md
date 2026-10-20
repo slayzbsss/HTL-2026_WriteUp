@@ -4,8 +4,6 @@
 
 - **Titre :** Pollstar
 - **Catégorie :** reven
-- **Points :** 481
-- **Solves :** 77
 - **Connexion :** *aucune* (crackme local, pas de service réseau)
 
 > *Everyone wants to be scheduled first.*
