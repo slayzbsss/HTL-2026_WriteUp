@@ -1,214 +1,177 @@
-# Crosswire
+# Seam Split
 
-- **CTF :** Hack Ton Lycée (HTL) 2026
-- **Catégorie :** infra
-- **Points :** 584 — **Solves :** 69
-- **Grader :** `http://infra.ctf.yogosha.com:7002`
-- **Flag :** `HTL{pin_the_subject_not_just_the_audience}`
+- **Catégorie :** crypto
+- **CTF :** Hack Ton Lycée (HTL 2026, plateforme Yogosha)
+- **Service :** `http://crypto.ctf.yogosha.com:9004`
+- **Flag :** `HTL{interior_bits_factor_together}`
 
 ## Énoncé
 
-La CI de `acme-corp/urlmin-deploy` déploie sur AWS sans aucune clé statique : le
-workflow `deploy` demande un jeton OIDC GitHub Actions et l'échange, via le
-fournisseur OIDC du compte, contre le rôle IAM `github-deploy-role`
-(`sts:AssumeRoleWithWebIdentity`). Ce rôle peut écrire dans le bucket
-d'artefacts de production.
+> Une appliance a généré des clés RSA « au rabais » et a publié tous ses modules publics.
+> Pour économiser l'entropie, le firmware a réutilisé un **même bloc de poids fort** dans
+> chaque nombre premier privé, mais l'a placé à un **décalage de bits différent et non
+> divulgué** pour chaque clé — la « couture » (seam) se cache donc à une position
+> intérieure inconnue de chaque module. Un de ces modules chiffre le flag sous `e = 65537`.
+> Le vérifieur ne détient aucune clé privée : récupérez un facteur non trivial du module
+> cible et envoyez-le à `/factor`, qui termine le déchiffrement.
 
-Lors du dernier incident, un jeton OIDC capturé a montré qu'un run qui **n'était
-pas** le déploiement de production assumait quand même `github-deploy-role`.
-C'est la *trust policy* du rôle qui décide qui a le droit de faire cet échange,
-et elle est actuellement trop permissive.
+## Protections / modèle
 
-But : durcir la trust policy pour que le contexte capturé ne puisse plus assumer
-le rôle, **sans** casser le vrai déploiement. Le grader évalue la policy soumise
-en direct contre le vrai jeton de deploy ET le jeton d'incident ; il ne rend le
-flag que si la policy est à la fois **secure** (incident rejeté) et
-**functional** (le vrai deploy assume toujours le rôle et garde sa permission).
-
-## Le modèle
-
-- **Fichier à éditer :** `trust-policy.json` (le `AssumeRolePolicyDocument` du
-  rôle).
-- `deploy.yml` : le seul workflow censé atteindre le rôle (push sur `main`, lié
-  à l'environnement protégé `production`).
-- `captured-token.jwt` : le jeton OIDC observé pendant l'incident.
-
-La trust policy fournie au départ :
-
-```json
-"Condition": {
-  "StringEquals": {
-    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-    "token.actions.githubusercontent.com:repository_owner": "acme-corp"
-  }
-}
-```
-
-Elle ne vérifie que **l'audience** (`aud`) et **le propriétaire du dépôt**
-(`repository_owner`).
+- `keys.json` (aussi servi par `GET /keys.json`) contient :
+  - `e = 65537` ;
+  - `moduli` : 8 modules RSA `N_0 .. N_7` (1011–1028 bits), en hex ;
+  - `flag_index = 2` : le module qui chiffre le flag ;
+  - `flag_ciphertext = m^e mod N_2`.
+- `POST /factor {"p": "<hex>"}` : le serveur vérifie que `p` est un diviseur **non trivial**
+  de `N_{flag_index}`, puis calcule `q = N/p`, `d = e^{-1} mod φ(N)`, `m = c^d mod N` et
+  renvoie le texte clair. Aucune clé privée stockée → **la seule voie est de factoriser N_2**.
 
 ## La vulnérabilité
 
-On décode le payload du jeton d'incident (`captured-token.jwt`, 2e segment en
-base64url) :
+Les primes partagent un bloc de bits commun (la « couture »), mais à une position
+intérieure inconnue et différente par clé. En pratique (vérifié sur les clés réelles),
+les primes sont **déséquilibrés** : `N_2 = p·q` avec `p` d'environ **400 bits** et `q`
+d'environ **615 bits**, et c'est le facteur de ~400 bits qui est partagé entre toutes les
+clés.
 
-```json
-{
-  "aud": "sts.amazonaws.com",
-  "sub": "repo:acme-corp/urlmin-deploy:pull_request",
-  "repository_owner": "acme-corp",
-  "event_name": "pull_request",
-  "ref": "refs/pull/42/merge",
-  "job_workflow_ref": "acme-corp/urlmin-deploy/.github/workflows/ci.yml@refs/pull/42/merge"
-}
-```
+C'est le cadre de la **factorisation implicite** (famille May–Ritzenhofen / *Generalized
+Implicit Factorization Problem*, Feng–Nitaj–Pan, arXiv 2304.08718) : quand plusieurs
+modules RSA partagent un grand bloc de bits dans un de leurs facteurs, un réseau
+(lattice) + réduction LLL révèle ces facteurs.
 
-Le jeton d'incident a `aud = sts.amazonaws.com` **et**
-`repository_owner = acme-corp` : il satisfait donc les **deux** seules
-conditions de la policy. N'importe quel workflow du moindre dépôt de
-l'organisation `acme-corp` (y compris un `pull_request` déclenché par une PR
-extérieure, workflow `ci.yml`, non lié à l'environnement `production`) peut
-assumer le rôle de déploiement. C'est beaucoup trop large.
-
-La granularité qui manque, c'est le claim **`sub`** (subject). Pour GitHub
-Actions, `sub` encode précisément le contexte d'exécution :
-
-- jeton d'incident : `sub = repo:acme-corp/urlmin-deploy:pull_request` ;
-- vrai deploy : il est lié à `environment: production` dans `deploy.yml`
-  (`environment: production`), donc GitHub émet
-  `sub = repo:acme-corp/urlmin-deploy:environment:production`.
-
-Il suffit donc d'**épingler le `sub`** sur le sujet exact du vrai déploiement.
+Idée clé : si on **aligne** les modules pour que le bloc partagé coïncide (décalage à
+gauche de chacun pour qu'ils aient tous la même taille), alors il existe une combinaison
+linéaire **à petits coefficients** des modules alignés qui annule la partie partagée. LLL
+trouve cette combinaison, et les coefficients obtenus sont des multiples des facteurs
+recherchés — un simple `pgcd` avec chaque module donne le facteur.
 
 ## Résolution pas à pas
 
-**1. Décoder le jeton capturé** pour lire son `sub` :
+**1. Récupérer les modules** via `GET /keys.json`.
 
 ```python
-import base64, json
-jwt = open("extracted/captured-token.jwt").read().strip()
-payload = jwt.split(".")[1]
-payload += "=" * (-len(payload) % 4)                # padding base64url
-print(json.loads(base64.urlsafe_b64decode(payload))["sub"])
-# -> repo:acme-corp/urlmin-deploy:pull_request
+data = GET /keys.json
+N   = [int(h,16) for h in data["moduli"]]     # 8 modules
+idx = int(data["flag_index"])                 # 2
 ```
 
-**2. En déduire le `sub` du vrai deploy.** `deploy.yml` contient
-`environment: production`, donc le sujet du jeton réel est :
-
-```
-repo:acme-corp/urlmin-deploy:environment:production
-```
-
-Les deux `sub` diffèrent : on peut discriminer dessus.
-
-**3. Ajouter une condition `StringEquals` sur le `sub`** (on garde `aud`) :
-
-```json
-"Condition": {
-  "StringEquals": {
-    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-    "token.actions.githubusercontent.com:sub": "repo:acme-corp/urlmin-deploy:environment:production"
-  }
-}
-```
-
-Le jeton d'incident (`...:pull_request`) ne correspond plus → **rejeté**.
-Le vrai deploy (`...:environment:production`) correspond → **toujours OK**.
-
-**4. Soumettre la policy au grader** et lire le verdict :
+**2. Aligner la couture.** On décale chaque module à gauche pour qu'ils aient tous la
+taille du plus grand : les blocs de poids fort partagés se superposent.
 
 ```python
-import json, urllib.request
-body = json.dumps({"trust_policy": policy}).encode()
-req = urllib.request.Request(f"http://{host}:{port}/grade", data=body,
-                             headers={"Content-Type": "application/json"})
-print(json.loads(urllib.request.urlopen(req).read()))
-# {"flag": "...", "functional": true, "passed": true, "secure": true}
+maxbits = max(x.bit_length() for x in N)
+Np = [N[i] << (maxbits - N[i].bit_length()) for i in range(len(N))]
 ```
 
-> Remarque : on pinne le **sujet** (`sub`), pas seulement l'audience — d'où le
-> flag. On pourrait aussi ajouter `repository`/`repository_id`, mais épingler le
-> `sub` sur l'environnement `production` suffit et reste la pratique canonique.
+**3. Construire le réseau.** Matrice `n × (2n-1)` : un poids `W = 2^550` sur la diagonale
+(pour forcer de petits coefficients), et des colonnes de « couplage » qui encodent, pour
+chaque `j`, la relation `a_0·N'_j − a_j·N'_0`.
 
-## Script complet → Script intégral
+```python
+W = 1 << 550
+B = IntegerMatrix(n, 2*n - 1)
+B[0, 0] = W
+for j in range(1, n):
+    B[0, (n-1)+j] = Np[j]          # ligne 0 : N'_j
+    B[j, j]       = W              # diagonale
+    B[j, (n-1)+j] = -Np[0]         # ligne j : -N'_0
+```
 
-Script autonome (stdlib seule, pas de dépendance exotique). Il construit la
-trust policy durcie et la soumet au grader.
+**4. Réduire avec LLL.** La première ligne réduite contient `a_i · W` dans ses `n`
+premières coordonnées.
+
+```python
+LLL.reduction(B)
+```
+
+**5. Lire les facteurs.** Pour chaque `i`, `a_i = |row0[i]| / W`, et `pgcd(a_i, N_i)`
+donne un facteur non trivial.
+
+```python
+for i in range(n):
+    ai = abs(B[0, i]) // W
+    g = gcd(ai, N[i])
+    if 1 < g < N[i]:
+        facts[i] = g               # facteur de N_i
+```
+
+**6. Soumettre le facteur de N_2** à `/factor` ; le serveur termine le déchiffrement RSA
+et renvoie le flag.
+
+```python
+p = facts[idx]                     # facteur de N_2 (p*q == N_2 vérifié)
+flag = POST /factor {"p": hex(p)}
+```
+
+## Script complet -> Script intégral
+
+Dépendance : `fpylll` (réduction LLL). Installable via
+`python3 -m venv venv && venv/bin/pip install fpylll cysignals`.
+Lançable par `python3 solve.py crypto.ctf.yogosha.com 9004`.
 
 ```python
 #!/usr/bin/env python3
-# Crosswire (HTL 2026 - infra) - solveur autonome.
-# Usage : python3 solve.py <host> <port>
-#   ex. : python3 solve.py infra.ctf.yogosha.com 7002
-import sys, json, urllib.request
+"""Seam Split - implicit (GIFP-style) factorization of a batch of RSA moduli
+that share a high-entropy block across their primes. Left-align the moduli so
+the shared seam coincides, run LLL, read a factor of each N off the short vector.
+Needs: fpylll.  Usage: python3 solve.py <host> <port>
+"""
+import sys, json, urllib.request, urllib.error
+from math import gcd
+from fpylll import IntegerMatrix, LLL
 
-# --- Trust policy durcie ---------------------------------------------------
-TRUST_POLICY = {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Principal": {
-                "Federated": "arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com"
-            },
-            "Action": "sts:AssumeRoleWithWebIdentity",
-            "Condition": {
-                "StringEquals": {
-                    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-                    # LA correction : on fige le sujet exact du deploiement reel.
-                    # Jeton d'incident : sub=repo:acme-corp/urlmin-deploy:pull_request -> rejete.
-                    # Vrai deploy (lie a environment: production) :
-                    #   sub=repo:acme-corp/urlmin-deploy:environment:production -> accepte.
-                    "token.actions.githubusercontent.com:sub": "repo:acme-corp/urlmin-deploy:environment:production"
-                }
-            }
-        }
-    ]
-}
+def jget(url): return json.load(urllib.request.urlopen(url))
+def jpost(url, obj):
+    req = urllib.request.Request(url, data=json.dumps(obj).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try: return json.load(urllib.request.urlopen(req))
+    except urllib.error.HTTPError as e: return json.load(e)
 
+def factor_batch(N):
+    n = len(N)
+    maxbits = max(x.bit_length() for x in N)
+    Np = [N[i] << (maxbits - N[i].bit_length()) for i in range(n)]  # align the seam
+    W = 1 << 550
+    B = IntegerMatrix(n, 2 * n - 1)
+    B[0, 0] = W
+    for j in range(1, n):
+        B[0, (n - 1) + j] = Np[j]
+        B[j, j] = W
+        B[j, (n - 1) + j] = -Np[0]
+    LLL.reduction(B)
+    facts = {}
+    for i in range(n):
+        ai = abs(B[0, i]) // W
+        if ai:
+            g = gcd(ai, N[i])
+            if 1 < g < N[i]:
+                facts[i] = g
+    return facts
 
 def main():
-    if len(sys.argv) != 3:
-        sys.exit(f"usage: python3 {sys.argv[0]} <host> <port>")
-    host, port = sys.argv[1], sys.argv[2]
-    url = f"http://{host}:{port}/grade"
-
-    body = json.dumps({"trust_policy": TRUST_POLICY}).encode()
-    req = urllib.request.Request(
-        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=20) as r:
-        resp = json.loads(r.read())
-
-    print(json.dumps(resp, indent=2))
-    if resp.get("flag"):
-        print("\nFLAG:", resp["flag"])
-
+    host = sys.argv[1] if len(sys.argv) > 1 else "crypto.ctf.yogosha.com"
+    port = sys.argv[2] if len(sys.argv) > 2 else "9004"
+    base = f"http://{host}:{port}"
+    data = jget(base + "/keys.json")
+    N = [int(h, 16) for h in data["moduli"]]
+    idx = int(data["flag_index"])
+    facts = factor_batch(N)
+    p = facts[idx]
+    assert N[idx] % p == 0
+    out = jpost(base + "/factor", {"p": format(p, "x")})
+    print(out.get("flag") or out)
 
 if __name__ == "__main__":
     main()
 ```
 
-Exécution :
+## Test
+
+Testé **hors-ligne** sur le `keys.json` fourni : le réseau + LLL factorise les 8 modules
+en ~0,1 s ; pour `N_2`, on obtient `p` (400 bits) et `q = N_2/p` (615 bits) avec
+`p·q == N_2`. Déchiffrement RSA local du `flag_ciphertext` → `HTL{...}`. Puis confirmé
+contre le service live via `/factor` :
 
 ```
-$ python3 solve.py infra.ctf.yogosha.com 7002
-{
-  "flag": "HTL{pin_the_subject_not_just_the_audience}",
-  "functional": true,
-  "passed": true,
-  "secure": true
-}
-
-FLAG: HTL{pin_the_subject_not_just_the_audience}
+HTL{interior_bits_factor_together}
 ```
-
-## Flag
-
-```
-HTL{pin_the_subject_not_just_the_audience}
-```
-
-> Testé : oui — soumis au grader live `infra.ctf.yogosha.com:7002`,
-> `secure: true` et `functional: true`.
