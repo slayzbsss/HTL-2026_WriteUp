@@ -4,8 +4,6 @@
 
 - **Titre :** Split Brain
 - **Catégorie :** webex
-- **Points :** 335
-- **Solves :** 87
 - **Connexion :** `http://web.ctf.yogosha.com:8001`
 
 > StreamFront is a bespoke HTTP/1.1 reverse proxy sitting in front of a single
