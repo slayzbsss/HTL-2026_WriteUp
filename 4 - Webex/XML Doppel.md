@@ -4,8 +4,6 @@
 
 - **Titre :** XML Doppel
 - **Catégorie :** webex
-- **Points :** 494
-- **Solves :** 76
 - **Connexion :** `http://web.ctf.yogosha.com:8003`
 
 > FleetDesk is an SSO-gated support console. Your identity provider posts a signed
