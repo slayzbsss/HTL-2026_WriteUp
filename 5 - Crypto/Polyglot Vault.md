@@ -1,6 +1,6 @@
 # Polyglot Vault
 
-- **Catégorie :** crypto — 766 points
+- **Catégorie :** crypto
 - **CTF :** Hack Ton Lycée (HTL 2026, plateforme Yogosha)
 - **Service :** `http://crypto.ctf.yogosha.com:9003`
 - **Flag :** `HTL{one_ciphertext_many_keys}`
