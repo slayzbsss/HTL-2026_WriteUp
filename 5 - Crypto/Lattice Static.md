@@ -1,6 +1,6 @@
 # Lattice Static
 
-- **Catégorie :** crypto — 534 points
+- **Catégorie :** crypto
 - **CTF :** Hack Ton Lycée (HTL 2026, plateforme Yogosha)
 - **Service :** `http://crypto.ctf.yogosha.com:9002`
 - **Flag :** `HTL{the_fo_check_leaks_every_coefficient}`
