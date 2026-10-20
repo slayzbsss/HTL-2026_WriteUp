@@ -4,8 +4,6 @@
 
 - **Titre :** TokenGate
 - **Catégorie :** webex
-- **Points :** 100
-- **Solves :** 110
 - **Connexion :** `http://web.ctf.yogosha.com:8005`
 
 > QuickBoard is a tiny kanban app. Sign in with any username and password and you
