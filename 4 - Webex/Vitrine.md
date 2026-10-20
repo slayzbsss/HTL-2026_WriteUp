@@ -4,8 +4,6 @@
 
 - **Titre :** Vitrine
 - **Catégorie :** webex
-- **Points :** 708
-- **Solves :** 58
 - **Connexion :** `http://web.ctf.yogosha.com:8008`
 
 > Le site de l'établissement récupère ses illustrations depuis différentes sources,
